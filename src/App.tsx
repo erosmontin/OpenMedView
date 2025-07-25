@@ -26,6 +26,18 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<
     'combined' | 'axial' | 'coronal' | 'sagittal' | '3d'
   >('combined');
+  const [drawingEnabled, setDrawingEnabled] = useState(false);
+  const [penValue, setPenValue] = useState(1);
+  const [fillMode, setFillMode] = useState(false);
+  const [drawOpacity, setDrawOpacity] = useState(0.8);
+  const [zoom, setZoom] = useState(1.0); // 1.0 == 100%
+  const [offsetX, setOffsetX] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef<{ x: number; y: number; offX: number; offY: number } | null>(null);
+  const [targetWindow, setTargetWindow] = useState<[number,number]>([0,1]);
+  const [sourceWindow, setSourceWindow] = useState<[number,number]>([0,1]);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (canvasRef.current && !nv) {
@@ -124,12 +136,86 @@ const App: React.FC = () => {
     setOpacity(0, 1 - blend);
     setOpacity(1, blend);
     nv.updateGLVolume();
+    nv.drawScene(true);         // ← force a redraw after changing opacity
   }, [nv, blend]);
+
+  useEffect(() => {
+    if (!nv) return;
+    // apply drawing settings
+    nv.setDrawingEnabled(drawingEnabled);
+    nv.setPenValue(penValue, fillMode);
+    nv.setDrawOpacity(drawOpacity);
+
+    // apply zoom
+    nv.opts.zoomFactor = zoom;
+    nv.drawScene(true);
+  }, [nv, drawingEnabled, penValue, fillMode, drawOpacity, zoom]);
+
+  useEffect(() => {
+    if (!nv) return;
+    console.log('🔍 zoom →', zoom);
+    nv.opts.zoomFactor = zoom;
+    nv.drawScene(true);
+  }, [nv, zoom]);
+
+  useEffect(() => {
+    if (!nv) return;
+    if (nv.volumes[0]) {
+      const [lo, hi] = nv.volumes[0].dataRange;
+      setTargetWindow([lo, hi]);
+    }
+    if (nv.volumes[1]) {
+      const [lo, hi] = nv.volumes[1].dataRange;
+      setSourceWindow([lo, hi]);
+    }
+  }, [nv, targetUrl, sourceUrl]);
+
+  useEffect(() => {
+    if (!nv) return;
+    // only touch layers that actually exist
+    if (nv.volumes[0]) {
+      nv.opts.clipVolumeLow[0]  = targetWindow[0];
+      nv.opts.clipVolumeHigh[0] = targetWindow[1];
+    }
+    if (nv.volumes[1]) {
+      nv.opts.clipVolumeLow[1]  = sourceWindow[0];
+      nv.opts.clipVolumeHigh[1] = sourceWindow[1];
+    }
+    nv.updateGLVolume();      // ← upload new window/level to GPU
+    nv.drawScene(true);       // ← redraw with new settings
+  }, [nv, targetWindow, sourceWindow]);
+
+  const undoDraw = () => {
+    if (!nv) return;
+    nv.drawUndo();
+  };
+
+  const saveDrawing = () => {
+    if (!nv) return;
+    nv.saveImage({ filename: 'drawing.nii.gz', isSaveDrawing: true });
+  };
+
+  // show custom context menu
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  };
+  // hide menu
+  const closeCtxMenu = () => setCtxMenu(null);
 
   return (
     <div style={{ padding: 10, height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <h3>Niivue Dual Viewer with Blending</h3>
-      <div style={{ display: 'flex', gap: 20, marginBottom: 10 }}>
+      <h3>Niivue Dual Viewer with Blending & Drawing</h3>
+      <div
+        style={{
+          display: 'flex',
+          gap: 20,
+          marginBottom: 10,
+          position: 'relative',
+          zIndex: 1,               // ← keep controls on top
+          background: '#fff'
+        }}
+      >
         <div>
           <label>View Mode:</label>
           <select value={viewMode} onChange={e => setViewMode(e.target.value as any)}>
@@ -183,9 +269,205 @@ const App: React.FC = () => {
           />
           <span>{Math.round((1 - blend) * 100)}% Target / {Math.round(blend * 100)}% Source</span>
         </div>
+
+        {/* Drawing Controls */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <button onClick={() => setDrawingEnabled(!drawingEnabled)}>
+            {drawingEnabled ? 'Disable Drawing' : 'Enable Drawing'}
+          </button>
+          <div>
+            <label>Pen Value:</label>
+            <input
+              type="number"
+              min="0" max="255"
+              value={penValue}
+              onChange={e => setPenValue(parseInt(e.target.value, 10))}
+              style={{ width: 60, marginLeft: 6 }}
+            />
+          </div>
+          <div>
+            <label>Fill Mode:</label>
+            <input
+              type="checkbox"
+              checked={fillMode}
+              onChange={e => setFillMode(e.target.checked)}
+              style={{ marginLeft: 6 }}
+            />
+          </div>
+          <div>
+            <label>Opacity:</label>
+            <input
+              type="range"
+              min="0" max="1" step="0.01"
+              value={drawOpacity}
+              onChange={e => setDrawOpacity(parseFloat(e.target.value))}
+            />
+            <span>{Math.round(drawOpacity * 100)}%</span>
+          </div>
+          <div>
+            <label>Zoom:</label>
+            <input
+              type="range"
+              min="0.5"
+              max="3"
+              step="0.1"
+              value={zoom}
+              onChange={e => setZoom(parseFloat(e.target.value))}
+              style={{ width: 120, marginLeft: 6 }}
+            />
+            <span>{Math.round(zoom * 100)}%</span>
+          </div>
+          <button onClick={undoDraw}>Undo</button>
+          <button onClick={saveDrawing}>Save Drawing</button>
+        </div>
+
+        <div style={{ display:'flex', gap:40, marginTop:10 }}>
+          <div>
+            <h4>Target ({targetColorMap})</h4>
+            <div style={{
+              width: 20,
+              height: 150,
+              background: 'lightgray',
+              border: '1px solid #999'
+            }} />
+            <label>Min:</label>
+            <input
+              type="number"
+              value={targetWindow[0]}
+              onChange={e => setTargetWindow([+e.target.value, targetWindow[1]])}
+              style={{ width: 60, marginLeft: 6 }}
+            />
+            <label>Max:</label>
+            <input
+              type="number"
+              value={targetWindow[1]}
+              onChange={e => setTargetWindow([targetWindow[0], +e.target.value])}
+              style={{ width: 60, marginLeft: 6 }}
+            />
+          </div>
+
+          <div>
+            <h4>Source ({sourceColorMap})</h4>
+            <div style={{
+              width: 20,
+              height: 150,
+              background: 'lightgray',
+              border: '1px solid #999'
+            }} />
+            <label>Min:</label>
+            <input
+              type="number"
+              value={sourceWindow[0]}
+              onChange={e => setSourceWindow([+e.target.value, sourceWindow[1]])}
+              style={{ width: 60, marginLeft: 6 }}
+            />
+            <label>Max:</label>
+            <input
+              type="number"
+              value={sourceWindow[1]}
+              onChange={e => setSourceWindow([sourceWindow[0], +e.target.value])}
+              style={{ width: 60, marginLeft: 6 }}
+            />
+          </div>
+        </div>
       </div>
 
-      <canvas ref={canvasRef} style={{ flex: 1, width: '100%' }} />
+      <div
+        style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
+        onContextMenu={handleContextMenu}
+        onClick={closeCtxMenu}
+      >
+        {/* context menu */}
+        {ctxMenu && (
+          <ul
+            style={{
+              position: 'absolute',
+              top: ctxMenu.y,
+              left: ctxMenu.x,
+              listStyle: 'none',
+              margin: 0,
+              padding: 4,
+              background: '#fff',
+              border: '1px solid #ccc',
+              zIndex: 10
+            }}
+          >
+            <li onClick={() => { setZoom(z => Math.min(3, z * 1.2)); closeCtxMenu(); }}>
+              Zoom In
+            </li>
+            <li onClick={() => { setZoom(z => Math.max(0.5, z / 1.2)); closeCtxMenu(); }}>
+              Zoom Out
+            </li>
+            <li onClick={() => { setZoom(1); closeCtxMenu(); }}>
+              Reset Zoom
+            </li>
+            <li onClick={() => {
+              if (!nv) return;
+              nv.opts.isColorbar = !nv.opts.isColorbar;
+              nv.drawScene(true);
+              closeCtxMenu();
+            }}>
+              Toggle Colorbars
+            </li>
+            <li onClick={() => {
+              const vol = prompt('Volume index (0=target,1=source):', '0');
+              if (vol == null) return closeCtxMenu();
+              const idx = Number(vol);
+              const cur = idx === 0 ? targetWindow : sourceWindow;
+              const lo = prompt('Min:', String(cur[0]));
+              const hi = prompt('Max:', String(cur[1]));
+              if (lo != null && hi != null) {
+                const bounds: [number, number] = [parseFloat(lo), parseFloat(hi)];
+                if (idx === 0) setTargetWindow(bounds);
+                else setSourceWindow(bounds);
+              }
+              closeCtxMenu();
+            }}>
+              Adjust Window/Level
+            </li>
+          </ul>
+        )}
+
+        <canvas
+          ref={canvasRef}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            touchAction: 'none',
+            transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
+            transformOrigin: 'top left',
+            zIndex: 0
+          }}
+          onWheel={e => {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.1 : 0.9;
+            setZoom(z => Math.max(0.5, Math.min(3, z * factor)));
+          }}
+          onPointerDown={e => {
+            e.preventDefault();
+            setIsDragging(true);
+            dragStartRef.current = { x: e.clientX, y: e.clientY, offX: offsetX, offY: offsetY };
+          }}
+          onPointerMove={e => {
+            if (!isDragging || !dragStartRef.current) return;
+            const dx = e.clientX - dragStartRef.current.x;
+            const dy = e.clientY - dragStartRef.current.y;
+            setOffsetX(dragStartRef.current.offX + dx);
+            setOffsetY(dragStartRef.current.offY + dy);
+          }}
+          onPointerUp={() => {
+            setIsDragging(false);
+            dragStartRef.current = null;
+          }}
+          onPointerLeave={() => {
+            setIsDragging(false);
+            dragStartRef.current = null;
+          }}
+        />
+      </div>
     </div>
   );
 };
