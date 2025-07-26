@@ -33,12 +33,13 @@ const App: React.FC = () => {
   const [zoom, setZoom] = useState(1.0); // 1.0 == 100%
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
+  // add wheelMode state to toggle slice vs blend
+  const [wheelMode, setWheelMode] = useState<'slice'|'blend'>('slice');
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<{ x: number; y: number; offX: number; offY: number } | null>(null);
   const [targetWindow, setTargetWindow] = useState<[number,number]>([0,1]);
   const [sourceWindow, setSourceWindow] = useState<[number,number]>([0,1]);
-  const [interactionMode, setInteractionMode] = useState<'drag'|'contrast'|'roi'>('drag');
-  const [wheelMode, setWheelMode] = useState<'slice'|'blend'>('slice');
+  const [interactionMode, setInteractionMode] = useState<'roi'>('roi');
 
   // for Contrast rectangle
   const [contrastRect, setContrastRect] = useState<{ x:number; y:number; w:number; h:number }|null>(null)
@@ -55,39 +56,50 @@ const App: React.FC = () => {
         showSagittal: true,
         show3D: true,
       });
-      // — Disable Niivue’s built-in wheel→slice scrolling —
+      // disable built‐in scroll, we’ll handle slice vs blend below
+      nvInstance.opts.isScrollZoom  = false;
       nvInstance.opts.isScrollSlice = false;
-      // nvInstance.opts.isScrollZoom  = false;  // no longer needed
 
       nvInstance.attachToCanvas(canvasRef.current);
       setNv(nvInstance);
     }
   }, [canvasRef, nv]);
 
-  // toggle Niivue's own scroll behaviors when wheelMode changes
+  // always use Niivue’s built-in slice scroll
   useEffect(() => {
     if (!nv) return;
-    nv.opts.isScrollZoom  = false;                  // always off
+    nv.opts.isScrollZoom  = false;
+    // enable slice scroll only in 'slice' mode
     nv.opts.isScrollSlice = (wheelMode === 'slice');
   }, [nv, wheelMode]);
 
-  // --- Attach native wheel listener to handle BLEND only (passive:false) ---
+  // Attach our blend‐on‐wheel handler (passive:false)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !nv) return;
+    // capture‐phase handler to intercept blend only
     const handler = (e: WheelEvent) => {
       if (wheelMode !== 'blend') return;
       e.preventDefault();
+      // stop Niivue’s own slice‐scroll from running
+      e.stopImmediatePropagation();
+
       const delta = e.deltaY < 0 ? 0.05 : -0.05;
-      const nb = Math.min(1, Math.max(0, blend + delta));
-      setBlend(nb);
-      nv.opts.volumeOpacity = [1 - nb, nb];
+      const newBlend = Math.max(0, Math.min(1, blend + delta));
+      setBlend(newBlend);
+      nv.opts.volumeOpacity = [1 - newBlend, newBlend];
       nv.updateGLVolume();
       nv.drawScene(true);
     };
-    canvas.addEventListener('wheel', handler, { passive: false });
+    // attach in capture phase
+    canvas.addEventListener('wheel', handler, {
+      passive: false,
+      capture: true
+    });
     return () => {
-      canvas.removeEventListener('wheel', handler);
+      canvas.removeEventListener('wheel', handler, {
+        capture: true
+      });
     };
   }, [nv, wheelMode, blend]);
 
@@ -248,49 +260,11 @@ const App: React.FC = () => {
   };
 
   // pointer handlers
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (interactionMode === 'drag' && e.button === 0) {
-      e.preventDefault();
-      setIsDragging(true);
-      dragStartRef.current = { x: e.clientX, y: e.clientY, offX: offsetX, offY: offsetY };
-    }
-    else if (interactionMode === 'contrast' && e.button === 0) {
-      // start contrast‐rect
-      rectStartRef.current = { x: e.clientX, y: e.clientY }
-      setContrastRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 })
-    }
-    // in ROI mode we leave pointer events to Niivue
-  };
-
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (interactionMode === 'drag' && isDragging && dragStartRef.current) {
-      const dx = e.clientX - dragStartRef.current.x;
-      const dy = e.clientY - dragStartRef.current.y;
-      setOffsetX(dragStartRef.current.offX + dx);
-      setOffsetY(dragStartRef.current.offY + dy);
-    }
-    else if (interactionMode === 'contrast' && rectStartRef.current) {
-      // update contrast‐rect dimensions
-      const dx = e.clientX - rectStartRef.current.x
-      const dy = e.clientY - rectStartRef.current.y
-      setContrastRect({
-        x: rectStartRef.current.x,
-        y: rectStartRef.current.y,
-        w: dx,
-        h: dy
-      })
-    }
-  };
-
-  const onPointerUp = (e?: React.PointerEvent) => {
-    if (interactionMode === 'drag') {
-      setIsDragging(false);
-    }
-  };
+  // we don’t need drag/contrast here any more – Niivue handles those internally
 
   // only intercept blend‐wheel; Zoom/Slice go to Niivue’s own handlers
   const onBlendWheel = (e: React.WheelEvent) => {
-    if (!nv) return
+    if (!nv || wheelMode !== 'blend') return
     e.preventDefault()
     const delta = e.deltaY < 0 ? 0.05 : -0.05
     const newBlend = Math.max(0, Math.min(1, blend + delta))
@@ -302,11 +276,13 @@ const App: React.FC = () => {
 
   // 2) BEHAVIOR effect: map interactionMode → Niivue flags
   useEffect(() => {
-    if (!nv) return
-    nv.opts.isUseTranslate = interactionMode === 'drag'
-    nv.opts.isUseContrast  = interactionMode === 'contrast'
-    nv.drawScene(true)
-  }, [nv, interactionMode])
+    if (!nv) return;
+    // we only care about ROI drawing now
+    nv.opts.isUseTranslate = false;
+    nv.opts.isUseContrast  = false;
+    nv.setDrawingEnabled(interactionMode === 'roi' && drawingEnabled);
+    nv.drawScene(true);
+  }, [nv, interactionMode, drawingEnabled]);
 
   // 3) DISABLE ROI in 3D mode
   useEffect(() => {
@@ -316,24 +292,9 @@ const App: React.FC = () => {
     }
   }, [viewMode])
 
-  // 5) UNIFIED WHEEL handler for Zoom/Slice/Blend
-  const onWheelCapture = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    if (!nv) return
-    e.preventDefault()
-    switch (wheelMode) {
-      case 'slice':
-        nv.scrollSlice(e.deltaY < 0 ? 1 : -1)
-        break
-      case 'blend':
-        const delta = e.deltaY < 0 ? 0.05 : -0.05
-        const nb    = Math.min(1, Math.max(0, blend + delta))
-        setBlend(nb)
-        nv.opts.volumeOpacity = [1 - nb, nb]
-        nv.updateGLVolume()
-        break
-    }
-    nv.drawScene(true)
-  }
+  // wheel is handled by:
+  //  • Niivue’s internal slice‐scroll when wheelMode==='slice' (nv.opts.isScrollSlice)
+  //  • your native blend listener (attached above with passive:false)
 
   // apply drawing settings + zoom + ROI draw toggle
   useEffect(() => {
@@ -452,31 +413,27 @@ const App: React.FC = () => {
           <span>{Math.round(zoom * 100)}%</span>
         </div>
 
-        {/* NEW: Behavior & Wheel Mode selects */}
+        {/* Only ROI remains as a “mode” */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div>
-            <label>Behavior:</label>
-            <select
-              value={interactionMode}
-              onChange={e => setInteractionMode(e.target.value as any)}
-              style={{ marginLeft: 6 }}
-            >
-              <option value="drag">Drag / Pan</option>
-              <option value="contrast">Contrast</option>
-              <option value="roi" disabled={viewMode==='3d'}>ROI Design</option>
-            </select>
-          </div>
-          <div>
-            <label>Wheel Mode:</label>
-            <select
-              value={wheelMode}
-              onChange={e => setWheelMode(e.target.value as any)}
-              style={{ marginLeft: 6 }}
-            >
-              <option value="slice">Slice</option>
-              <option value="blend">Blend</option>
-            </select>
-          </div>
+          <label>ROI Design:</label>
+          <button
+            disabled={viewMode === '3d'}
+            onClick={() => setInteractionMode('roi')}
+          >
+            {drawingEnabled ? 'Stop ROI' : 'Start ROI'}
+          </button>
+        </div>
+        {/* NEW: wheelMode selector */}
+        <div>
+          <label>Wheel Mode:</label>
+          <select
+            value={wheelMode}
+            onChange={e => setWheelMode(e.target.value as 'slice'|'blend')}
+            style={{ marginLeft: 6 }}
+          >
+            <option value="slice">Slice</option>
+            <option value="blend">Blend</option>
+          </select>
         </div>
       </div>
 
@@ -539,15 +496,10 @@ const App: React.FC = () => {
             width: '100%',    // full fill parent
             height: '100%',
             touchAction: 'none',
-            transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
-            transformOrigin: 'center center',
             zIndex: 0
           }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
-          /* Wheel handled via native listener above */
+          onContextMenu={e => e.preventDefault()}   // allow Niivue r-click window/level
+          /* Niivue’s internal pan/zoom & contrast handlers will now do their thing */
         />
       </div>
     </div>
