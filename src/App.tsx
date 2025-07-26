@@ -20,7 +20,7 @@ const App: React.FC = () => {
   const [nv, setNv] = useState<Niivue | null>(null);
   const [targetUrl, setTargetUrl] = useState<string>("");
   const [sourceUrl, setSourceUrl] = useState<string>("");
-  const [blend, setBlend] = useState<number>(0.0);
+  const [blend, setBlend] = useState<number>(0.5);
   const [targetColorMap, setTargetColorMap] = useState("gray");
   const [sourceColorMap, setSourceColorMap] = useState("red");
   const [viewMode, setViewMode] = useState<
@@ -37,7 +37,12 @@ const App: React.FC = () => {
   const dragStartRef = useRef<{ x: number; y: number; offX: number; offY: number } | null>(null);
   const [targetWindow, setTargetWindow] = useState<[number,number]>([0,1]);
   const [sourceWindow, setSourceWindow] = useState<[number,number]>([0,1]);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [interactionMode, setInteractionMode] = useState<'drag'|'contrast'|'roi'>('drag');
+  const [wheelMode, setWheelMode] = useState<'zoom'|'slice'|'blend'>('zoom');
+
+  // for Contrast rectangle
+  const [contrastRect, setContrastRect] = useState<{ x:number; y:number; w:number; h:number }|null>(null)
+  const rectStartRef = useRef<{ x:number; y:number }|null>(null)
 
   useEffect(() => {
     if (canvasRef.current && !nv) {
@@ -50,10 +55,37 @@ const App: React.FC = () => {
         showSagittal: true,
         show3D: true,
       });
+      // — Disable Niivue’s built-in wheel→slice scrolling —
+      nvInstance.opts.isScrollSlice = false;
+      nvInstance.opts.isScrollZoom  = false;
+
       nvInstance.attachToCanvas(canvasRef.current);
       setNv(nvInstance);
     }
   }, [canvasRef, nv]);
+
+  // toggle Niivue's own scroll behaviors when wheelMode changes
+  useEffect(() => {
+    if (!nv) return;
+    if (wheelMode === 'zoom') {
+      nv.opts.isScrollZoom = true;
+      nv.opts.isScrollSlice = false;
+    } else if (wheelMode === 'slice') {
+      nv.opts.isScrollZoom = false;
+      nv.opts.isScrollSlice = true;
+    } else {
+      // blend: disable both
+      nv.opts.isScrollZoom = false;
+      nv.opts.isScrollSlice = false;
+    }
+  }, [nv, wheelMode]);
+
+  // toggle Niivue’s wheel→zoom/slice per wheelMode
+  useEffect(() => {
+    if (!nv) return
+    nv.opts.isScrollZoom  = wheelMode === 'zoom'
+    nv.opts.isScrollSlice = wheelMode === 'slice'
+  }, [nv, wheelMode])
 
   // helper to switch Niivue’s sliceType + redraw
   const applyViewMode = () => {
@@ -195,24 +227,98 @@ const App: React.FC = () => {
     nv.saveImage({ filename: 'drawing.nii.gz', isSaveDrawing: true });
   };
 
-  // show custom context menu
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setCtxMenu({ x: e.clientX, y: e.clientY });
+  // new helper to prompt window/level on demand
+  const adjustContrast = () => {
+    if (!nv) return;
+    const loStr = prompt('New Min:', String(nv.opts.clipVolumeLow[0] ?? 0));
+    const hiStr = prompt('New Max:', String(nv.opts.clipVolumeHigh[0] ?? 1));
+    if (loStr !== null && hiStr !== null) {
+      const lo = parseFloat(loStr), hi = parseFloat(hiStr);
+      nv.opts.clipVolumeLow[0]  = lo;
+      nv.opts.clipVolumeHigh[0] = hi;
+      nv.updateGLVolume();
+      nv.drawScene(true);
+    }
+    setContrastRect(null);
+    setInteractionMode('drag');
   };
-  // hide menu
-  const closeCtxMenu = () => setCtxMenu(null);
 
+  // pointer handlers
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (interactionMode === 'drag' && e.button === 0) {
+      e.preventDefault();
+      setIsDragging(true);
+      dragStartRef.current = { x: e.clientX, y: e.clientY, offX: offsetX, offY: offsetY };
+    }
+    else if (interactionMode === 'contrast' && e.button === 0) {
+      // start contrast‐rect
+      rectStartRef.current = { x: e.clientX, y: e.clientY }
+      setContrastRect({ x: e.clientX, y: e.clientY, w: 0, h: 0 })
+    }
+    // in ROI mode we leave pointer events to Niivue
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (interactionMode === 'drag' && isDragging && dragStartRef.current) {
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      setOffsetX(dragStartRef.current.offX + dx);
+      setOffsetY(dragStartRef.current.offY + dy);
+    }
+    else if (interactionMode === 'contrast' && rectStartRef.current) {
+      // update contrast‐rect dimensions
+      const dx = e.clientX - rectStartRef.current.x
+      const dy = e.clientY - rectStartRef.current.y
+      setContrastRect({
+        x: rectStartRef.current.x,
+        y: rectStartRef.current.y,
+        w: dx,
+        h: dy
+      })
+    }
+  };
+
+  const onPointerUp = (e?: React.PointerEvent) => {
+    if (interactionMode === 'drag') {
+      setIsDragging(false);
+    }
+  };
+
+  // only intercept blend‐wheel; Zoom/Slice go to Niivue’s own handlers
+  const onBlendWheel = (e: React.WheelEvent) => {
+    if (!nv) return
+    e.preventDefault()
+    const delta = e.deltaY < 0 ? 0.05 : -0.05
+    const newBlend = Math.max(0, Math.min(1, blend + delta))
+    setBlend(newBlend)
+    nv.opts.volumeOpacity = [1 - newBlend, newBlend]
+    nv.updateGLVolume()
+    nv.drawScene(true)
+  }
+
+  // Wrap everything in a fixed‐height container so flex:1 has space to grow
   return (
-    <div style={{ padding: 10, height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div
+      style={{
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        margin: 0,
+        position: 'relative',
+        overflow: 'hidden',
+        touchAction: 'none'
+      }}
+    >
       <h3>Niivue Dual Viewer with Blending & Drawing</h3>
+
+      {/* ——— CONTROL PANEL ——— */}
       <div
         style={{
           display: 'flex',
           gap: 20,
           marginBottom: 10,
           position: 'relative',
-          zIndex: 1,               // ← keep controls on top
+          zIndex: 1,
           background: '#fff'
         }}
       >
@@ -321,150 +427,101 @@ const App: React.FC = () => {
           <button onClick={saveDrawing}>Save Drawing</button>
         </div>
 
-        <div style={{ display:'flex', gap:40, marginTop:10 }}>
+        {/* NEW: Behavior & Wheel Mode selects */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div>
-            <h4>Target ({targetColorMap})</h4>
-            <div style={{
-              width: 20,
-              height: 150,
-              background: 'lightgray',
-              border: '1px solid #999'
-            }} />
-            <label>Min:</label>
-            <input
-              type="number"
-              value={targetWindow[0]}
-              onChange={e => setTargetWindow([+e.target.value, targetWindow[1]])}
-              style={{ width: 60, marginLeft: 6 }}
-            />
-            <label>Max:</label>
-            <input
-              type="number"
-              value={targetWindow[1]}
-              onChange={e => setTargetWindow([targetWindow[0], +e.target.value])}
-              style={{ width: 60, marginLeft: 6 }}
-            />
+            <label>Behavior:</label>
+            <select
+              value={interactionMode}
+              onChange={e => setInteractionMode(e.target.value as any)}
+              style={{ marginLeft: 6 }}
+            >
+              <option value="drag">Drag / Pan</option>
+              <option value="contrast">Contrast</option>
+              <option value="roi">ROI Design</option>
+            </select>
           </div>
-
           <div>
-            <h4>Source ({sourceColorMap})</h4>
-            <div style={{
-              width: 20,
-              height: 150,
-              background: 'lightgray',
-              border: '1px solid #999'
-            }} />
-            <label>Min:</label>
-            <input
-              type="number"
-              value={sourceWindow[0]}
-              onChange={e => setSourceWindow([+e.target.value, sourceWindow[1]])}
-              style={{ width: 60, marginLeft: 6 }}
-            />
-            <label>Max:</label>
-            <input
-              type="number"
-              value={sourceWindow[1]}
-              onChange={e => setSourceWindow([sourceWindow[0], +e.target.value])}
-              style={{ width: 60, marginLeft: 6 }}
-            />
+            <label>Wheel Mode:</label>
+            <select
+              value={wheelMode}
+              onChange={e => setWheelMode(e.target.value as any)}
+              style={{ marginLeft: 6 }}
+            >
+              <option value="zoom">Zoom</option>
+              <option value="slice">Slice</option>
+              <option value="blend">Blend</option>
+            </select>
           </div>
         </div>
       </div>
 
-      <div
-        style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
-        onContextMenu={handleContextMenu}
-        onClick={closeCtxMenu}
+      {/* ——— VIEWER + CONTEXT‐MENU ——— */}
+      <div style={{
+        flex: 1,            // <— now flex:1 has actual height
+        position: 'relative',
+        overflow: 'hidden',
+        touchAction: 'none'
+      }}
       >
-        {/* context menu */}
-        {ctxMenu && (
-          <ul
-            style={{
-              position: 'absolute',
-              top: ctxMenu.y,
-              left: ctxMenu.x,
-              listStyle: 'none',
-              margin: 0,
-              padding: 4,
-              background: '#fff',
-              border: '1px solid #ccc',
-              zIndex: 10
-            }}
-          >
-            <li onClick={() => { setZoom(z => Math.min(3, z * 1.2)); closeCtxMenu(); }}>
-              Zoom In
-            </li>
-            <li onClick={() => { setZoom(z => Math.max(0.5, z / 1.2)); closeCtxMenu(); }}>
-              Zoom Out
-            </li>
-            <li onClick={() => { setZoom(1); closeCtxMenu(); }}>
-              Reset Zoom
-            </li>
-            <li onClick={() => {
-              if (!nv) return;
-              nv.opts.isColorbar = !nv.opts.isColorbar;
-              nv.drawScene(true);
-              closeCtxMenu();
-            }}>
-              Toggle Colorbars
-            </li>
-            <li onClick={() => {
-              const vol = prompt('Volume index (0=target,1=source):', '0');
-              if (vol == null) return closeCtxMenu();
-              const idx = Number(vol);
-              const cur = idx === 0 ? targetWindow : sourceWindow;
-              const lo = prompt('Min:', String(cur[0]));
-              const hi = prompt('Max:', String(cur[1]));
-              if (lo != null && hi != null) {
-                const bounds: [number, number] = [parseFloat(lo), parseFloat(hi)];
-                if (idx === 0) setTargetWindow(bounds);
-                else setSourceWindow(bounds);
-              }
-              closeCtxMenu();
-            }}>
-              Adjust Window/Level
-            </li>
-          </ul>
+        {/* ROI panel & contrast rectangle */}
+        {interactionMode === 'roi' && (
+          <div style={{
+            position: 'absolute', top: 10, right: 10,
+            background: 'rgba(255,255,255,0.9)', padding: 8, borderRadius: 4, zIndex: 11
+          }}>
+            <button onClick={() => setDrawingEnabled(d => !d)}>
+              {drawingEnabled ? 'Stop ROI' : 'Start ROI'}
+            </button>
+            <div>
+              <label>Pen:</label>
+              <input
+                type="number" min={0} max={255}
+                value={penValue}
+                onChange={e => setPenValue(+e.target.value)}
+                style={{ width: 50 }}
+              />
+            </div>
+            <div>
+              <label>Fill:</label>
+              <input
+                type="checkbox"
+                checked={fillMode}
+                onChange={e => setFillMode(e.target.checked)}
+              />
+            </div>
+            <div>
+              <label>Opacity:</label>
+              <input
+                type="range" min={0} max={1} step={0.01}
+                value={drawOpacity}
+                onChange={e => setDrawOpacity(+e.target.value)}
+              />
+            </div>
+          </div>
         )}
-
         <canvas
           ref={canvasRef}
           style={{
             position: 'absolute',
             top: 0,
             left: 0,
-            width: '100%',
+            width: '100%',    // full fill parent
             height: '100%',
             touchAction: 'none',
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
-            transformOrigin: 'top left',
+            transformOrigin: 'center center',
             zIndex: 0
           }}
-          onWheel={e => {
-            e.preventDefault();
-            const factor = e.deltaY < 0 ? 1.1 : 0.9;
-            setZoom(z => Math.max(0.5, Math.min(3, z * factor)));
-          }}
-          onPointerDown={e => {
-            e.preventDefault();
-            setIsDragging(true);
-            dragStartRef.current = { x: e.clientX, y: e.clientY, offX: offsetX, offY: offsetY };
-          }}
-          onPointerMove={e => {
-            if (!isDragging || !dragStartRef.current) return;
-            const dx = e.clientX - dragStartRef.current.x;
-            const dy = e.clientY - dragStartRef.current.y;
-            setOffsetX(dragStartRef.current.offX + dx);
-            setOffsetY(dragStartRef.current.offY + dy);
-          }}
-          onPointerUp={() => {
-            setIsDragging(false);
-            dragStartRef.current = null;
-          }}
-          onPointerLeave={() => {
-            setIsDragging(false);
-            dragStartRef.current = null;
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+          onWheelCapture={e => {
+            if (wheelMode === 'blend') {
+              onBlendWheel(e)
+              e.stopPropagation()
+            }
           }}
         />
       </div>
