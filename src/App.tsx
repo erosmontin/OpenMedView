@@ -71,12 +71,25 @@ const App: React.FC = () => {
     nv.opts.isScrollSlice = (wheelMode === 'slice');
   }, [nv, wheelMode]);
 
-  // toggle Niivue’s wheel→zoom/slice per wheelMode
+  // --- Attach native wheel listener to handle BLEND only (passive:false) ---
   useEffect(() => {
-    if (!nv) return
-    nv.opts.isScrollZoom  = wheelMode === 'zoom'
-    nv.opts.isScrollSlice = wheelMode === 'slice'
-  }, [nv, wheelMode])
+    const canvas = canvasRef.current;
+    if (!canvas || !nv) return;
+    const handler = (e: WheelEvent) => {
+      if (wheelMode !== 'blend') return;
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.05 : -0.05;
+      const nb = Math.min(1, Math.max(0, blend + delta));
+      setBlend(nb);
+      nv.opts.volumeOpacity = [1 - nb, nb];
+      nv.updateGLVolume();
+      nv.drawScene(true);
+    };
+    canvas.addEventListener('wheel', handler, { passive: false });
+    return () => {
+      canvas.removeEventListener('wheel', handler);
+    };
+  }, [nv, wheelMode, blend]);
 
   // helper to switch Niivue’s sliceType + redraw
   const applyViewMode = () => {
@@ -292,7 +305,6 @@ const App: React.FC = () => {
     if (!nv) return
     nv.opts.isUseTranslate = interactionMode === 'drag'
     nv.opts.isUseContrast  = interactionMode === 'contrast'
-    nv.setDrawingEnabled(interactionMode === 'roi')
     nv.drawScene(true)
   }, [nv, interactionMode])
 
@@ -322,6 +334,28 @@ const App: React.FC = () => {
     }
     nv.drawScene(true)
   }
+
+  // apply drawing settings + zoom + ROI draw toggle
+  useEffect(() => {
+    if (!nv) return
+    // only enable Niivue drawing when in ROI mode AND "Start ROI" is on
+    const enableDraw = interactionMode === 'roi' && drawingEnabled
+    nv.setDrawingEnabled(enableDraw)
+    nv.setPenValue(penValue, fillMode)
+    nv.setDrawOpacity(drawOpacity)
+
+    // apply zoom
+    nv.opts.zoomFactor = zoom
+    nv.drawScene(true)
+  }, [
+    nv,
+    interactionMode,    // so we disable draw when exiting ROI mode
+    drawingEnabled,
+    penValue,
+    fillMode,
+    drawOpacity,
+    zoom
+  ])
 
   // Wrap everything in a fixed‐height container so flex:1 has space to grow
   return (
@@ -403,55 +437,19 @@ const App: React.FC = () => {
           <span>{Math.round((1 - blend) * 100)}% Target / {Math.round(blend * 100)}% Source</span>
         </div>
 
-        {/* Drawing Controls */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <button onClick={() => setDrawingEnabled(!drawingEnabled)}>
-            {drawingEnabled ? 'Disable Drawing' : 'Enable Drawing'}
-          </button>
-          <div>
-            <label>Pen Value:</label>
-            <input
-              type="number"
-              min="0" max="255"
-              value={penValue}
-              onChange={e => setPenValue(parseInt(e.target.value, 10))}
-              style={{ width: 60, marginLeft: 6 }}
-            />
-          </div>
-          <div>
-            <label>Fill Mode:</label>
-            <input
-              type="checkbox"
-              checked={fillMode}
-              onChange={e => setFillMode(e.target.checked)}
-              style={{ marginLeft: 6 }}
-            />
-          </div>
-          <div>
-            <label>Opacity:</label>
-            <input
-              type="range"
-              min="0" max="1" step="0.01"
-              value={drawOpacity}
-              onChange={e => setDrawOpacity(parseFloat(e.target.value))}
-            />
-            <span>{Math.round(drawOpacity * 100)}%</span>
-          </div>
-          <div>
-            <label>Zoom:</label>
-            <input
-              type="range"
-              min="0.5"
-              max="3"
-              step="0.1"
-              value={zoom}
-              onChange={e => setZoom(parseFloat(e.target.value))}
-              style={{ width: 120, marginLeft: 6 }}
-            />
-            <span>{Math.round(zoom * 100)}%</span>
-          </div>
-          <button onClick={undoDraw}>Undo</button>
-          <button onClick={saveDrawing}>Save Drawing</button>
+        {/* NEW: Zoom slider */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <label>Zoom:</label>
+          <input
+            type="range"
+            min="0.5"
+            max="3"
+            step="0.1"
+            value={zoom}
+            onChange={e => setZoom(parseFloat(e.target.value))}
+            style={{ width: 120, marginLeft: 6 }}
+          />
+          <span>{Math.round(zoom * 100)}%</span>
         </div>
 
         {/* NEW: Behavior & Wheel Mode selects */}
@@ -500,20 +498,21 @@ const App: React.FC = () => {
               {drawingEnabled ? 'Stop ROI' : 'Start ROI'}
             </button>
             <div>
-              <label>Pen:</label>
+              <label>Pen Value:</label>
               <input
                 type="number" min={0} max={255}
                 value={penValue}
                 onChange={e => setPenValue(+e.target.value)}
-                style={{ width: 50 }}
+                style={{ width: 50, marginLeft: 6 }}
               />
             </div>
             <div>
-              <label>Fill:</label>
+              <label>Fill Mode:</label>
               <input
                 type="checkbox"
                 checked={fillMode}
                 onChange={e => setFillMode(e.target.checked)}
+                style={{ marginLeft: 6 }}
               />
             </div>
             <div>
@@ -523,6 +522,11 @@ const App: React.FC = () => {
                 value={drawOpacity}
                 onChange={e => setDrawOpacity(+e.target.value)}
               />
+              <span>{Math.round(drawOpacity * 100)}%</span>
+            </div>
+            <div>
+              <button onClick={undoDraw}>Undo</button>
+              <button onClick={saveDrawing}>Save Drawing</button>
             </div>
           </div>
         )}
@@ -543,14 +547,7 @@ const App: React.FC = () => {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
-          onWheelCapture={e => {
-            if (wheelMode === 'blend') {
-              onBlendWheel(e)
-              e.stopPropagation()
-            } else {
-              onWheelCapture(e)
-            }
-          }}
+          /* Wheel handled via native listener above */
         />
       </div>
     </div>
