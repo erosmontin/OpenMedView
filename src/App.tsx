@@ -79,29 +79,38 @@ const App: React.FC = () => {
     if (!canvas || !nv) return;
     // capture‐phase handler to intercept blend only
     const handler = (e: WheelEvent) => {
-      if (wheelMode !== 'blend') return;
-      e.preventDefault();
-      // stop Niivue’s own slice‐scroll from running
-      e.stopImmediatePropagation();
+      // — blend —
+      if (wheelMode === 'blend') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const delta = e.deltaY < 0 ? 0.05 : -0.05;
+        const newBlend = Math.max(0, Math.min(1, blend + delta));
+        setBlend(newBlend);
+        nv.opts.volumeOpacity = [1 - newBlend, newBlend];
+        nv.updateGLVolume();
+        nv.drawScene(true);
+        return;
+      }
+      // — zoom —
+      if (wheelMode === 'zoom') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        const newZoom = Math.max(0.5, Math.min(3, zoom * factor));
+        setZoom(newZoom);
+        nv.opts.zoomFactor = newZoom;
+        nv.drawScene(true);
+        return;
+      }
+      // — slice — fall through to Niivue’s internal isScrollSlice handler
+    };
 
-      const delta = e.deltaY < 0 ? 0.05 : -0.05;
-      const newBlend = Math.max(0, Math.min(1, blend + delta));
-      setBlend(newBlend);
-      nv.opts.volumeOpacity = [1 - newBlend, newBlend];
-      nv.updateGLVolume();
-      nv.drawScene(true);
-    };
     // attach in capture phase
-    canvas.addEventListener('wheel', handler, {
-      passive: false,
-      capture: true
-    });
+    canvas.addEventListener('wheel', handler, { passive: false, capture: true });
     return () => {
-      canvas.removeEventListener('wheel', handler, {
-        capture: true
-      });
+      canvas.removeEventListener('wheel', handler, { capture: true });
     };
-  }, [nv, wheelMode, blend]);
+  }, [nv, wheelMode, blend, zoom]);  // ← make sure zoom is included
 
   // helper to switch Niivue’s sliceType + redraw
   const applyViewMode = () => {
