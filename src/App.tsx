@@ -34,7 +34,7 @@ const App: React.FC = () => {
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
   // add wheelMode state to toggle slice vs blend
-  const [wheelMode, setWheelMode] = useState<'slice'|'blend'>('slice');
+  const [wheelMode, setWheelMode] = useState<'slice'|'blend'|'zoom'>('slice');
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<{ x: number; y: number; offX: number; offY: number } | null>(null);
   const [targetWindow, setTargetWindow] = useState<[number,number]>([0,1]);
@@ -68,9 +68,9 @@ const App: React.FC = () => {
   // always use Niivue’s built-in slice scroll
   useEffect(() => {
     if (!nv) return;
-    nv.opts.isScrollZoom  = false;
-    // enable slice scroll only in 'slice' mode
+    // only one mode active at a time:
     nv.opts.isScrollSlice = (wheelMode === 'slice');
+    nv.opts.isScrollZoom  = (wheelMode === 'zoom');
   }, [nv, wheelMode]);
 
   // Attach our blend‐on‐wheel handler (passive:false)
@@ -418,7 +418,17 @@ const App: React.FC = () => {
           <label>ROI Design:</label>
           <button
             disabled={viewMode === '3d'}
-            onClick={() => setInteractionMode('roi')}
+            onClick={() => {
+              if (drawingEnabled) {
+                // Stop ROI
+                setDrawingEnabled(false);
+                setInteractionMode('drag');
+              } else {
+                // Start ROI
+                setInteractionMode('roi');
+                setDrawingEnabled(true);
+              }
+            }}
           >
             {drawingEnabled ? 'Stop ROI' : 'Start ROI'}
           </button>
@@ -428,11 +438,12 @@ const App: React.FC = () => {
           <label>Wheel Mode:</label>
           <select
             value={wheelMode}
-            onChange={e => setWheelMode(e.target.value as 'slice'|'blend')}
+            onChange={e => setWheelMode(e.target.value as any)}
             style={{ marginLeft: 6 }}
           >
             <option value="slice">Slice</option>
             <option value="blend">Blend</option>
+            <option value="zoom">Zoom</option>
           </select>
         </div>
       </div>
