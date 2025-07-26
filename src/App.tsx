@@ -296,6 +296,45 @@ const App: React.FC = () => {
     nv.drawScene(true)
   }
 
+  // 2) BEHAVIOR effect: map interactionMode → Niivue flags
+  useEffect(() => {
+    if (!nv) return
+    nv.opts.isUseTranslate = interactionMode === 'drag'
+    nv.opts.isUseContrast  = interactionMode === 'contrast'
+    nv.setDrawingEnabled(interactionMode === 'roi')
+    nv.drawScene(true)
+  }, [nv, interactionMode])
+
+  // 3) DISABLE ROI in 3D mode
+  useEffect(() => {
+    if (viewMode === '3d' && interactionMode === 'roi') {
+      setInteractionMode('drag')
+      setDrawingEnabled(false)
+    }
+  }, [viewMode])
+
+  // 5) UNIFIED WHEEL handler for Zoom/Slice/Blend
+  const onWheelCapture = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    if (!nv) return
+    e.preventDefault()
+    switch (wheelMode) {
+      case 'zoom':
+        nv.scrollZoom(e.deltaY < 0 ? 1 : -1)
+        break
+      case 'slice':
+        nv.scrollSlice(e.deltaY < 0 ? 1 : -1)
+        break
+      case 'blend':
+        const delta = e.deltaY < 0 ? 0.05 : -0.05
+        const nb    = Math.min(1, Math.max(0, blend + delta))
+        setBlend(nb)
+        nv.opts.volumeOpacity = [1 - nb, nb]
+        nv.updateGLVolume()
+        break
+    }
+    nv.drawScene(true)
+  }
+
   // Wrap everything in a fixed‐height container so flex:1 has space to grow
   return (
     <div
@@ -438,7 +477,7 @@ const App: React.FC = () => {
             >
               <option value="drag">Drag / Pan</option>
               <option value="contrast">Contrast</option>
-              <option value="roi">ROI Design</option>
+              <option value="roi" disabled={viewMode==='3d'}>ROI Design</option>
             </select>
           </div>
           <div>
@@ -521,6 +560,8 @@ const App: React.FC = () => {
             if (wheelMode === 'blend') {
               onBlendWheel(e)
               e.stopPropagation()
+            } else {
+              onWheelCapture(e)
             }
           }}
         />
