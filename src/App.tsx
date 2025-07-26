@@ -38,7 +38,7 @@ const App: React.FC = () => {
   const [targetWindow, setTargetWindow] = useState<[number,number]>([0,1]);
   const [sourceWindow, setSourceWindow] = useState<[number,number]>([0,1]);
   const [interactionMode, setInteractionMode] = useState<'drag'|'contrast'|'roi'>('drag');
-  const [wheelMode, setWheelMode] = useState<'zoom'|'slice'|'blend'>('zoom');
+  const [wheelMode, setWheelMode] = useState<'slice'|'blend'>('slice');
 
   // for Contrast rectangle
   const [contrastRect, setContrastRect] = useState<{ x:number; y:number; w:number; h:number }|null>(null)
@@ -57,7 +57,7 @@ const App: React.FC = () => {
       });
       // — Disable Niivue’s built-in wheel→slice scrolling —
       nvInstance.opts.isScrollSlice = false;
-      nvInstance.opts.isScrollZoom  = false;
+      // nvInstance.opts.isScrollZoom  = false;  // no longer needed
 
       nvInstance.attachToCanvas(canvasRef.current);
       setNv(nvInstance);
@@ -67,17 +67,8 @@ const App: React.FC = () => {
   // toggle Niivue's own scroll behaviors when wheelMode changes
   useEffect(() => {
     if (!nv) return;
-    if (wheelMode === 'zoom') {
-      nv.opts.isScrollZoom = true;
-      nv.opts.isScrollSlice = false;
-    } else if (wheelMode === 'slice') {
-      nv.opts.isScrollZoom = false;
-      nv.opts.isScrollSlice = true;
-    } else {
-      // blend: disable both
-      nv.opts.isScrollZoom = false;
-      nv.opts.isScrollSlice = false;
-    }
+    nv.opts.isScrollZoom  = false;                  // always off
+    nv.opts.isScrollSlice = (wheelMode === 'slice');
   }, [nv, wheelMode]);
 
   // toggle Niivue’s wheel→zoom/slice per wheelMode
@@ -318,9 +309,6 @@ const App: React.FC = () => {
     if (!nv) return
     e.preventDefault()
     switch (wheelMode) {
-      case 'zoom':
-        nv.scrollZoom(e.deltaY < 0 ? 1 : -1)
-        break
       case 'slice':
         nv.scrollSlice(e.deltaY < 0 ? 1 : -1)
         break
@@ -487,7 +475,6 @@ const App: React.FC = () => {
               onChange={e => setWheelMode(e.target.value as any)}
               style={{ marginLeft: 6 }}
             >
-              <option value="zoom">Zoom</option>
               <option value="slice">Slice</option>
               <option value="blend">Blend</option>
             </select>
