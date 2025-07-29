@@ -113,7 +113,9 @@ const NiivueDualViewer: React.FC<NiivueDualViewerProps> = ({ availableVolumes, a
           gl: nv.canvas.gl,
           color: meshColors[meshColor] || [0, 1, 0, 1], // Default to green
           opacity: meshOpacity,
-          wireframe: wireframe
+          wireframe: wireframe,
+          nodeScale: 2.0,
+          scale:10
         }
         
         try {
