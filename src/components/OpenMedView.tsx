@@ -57,18 +57,16 @@ const OpenMedView: React.FC<OpenMedViewProps> = ({ availableVolumes, availableMe
   // initialize Niivue
   useEffect(() => {
     if (!canvasRef.current || nv) return
+    // cast to any to bypass Partial<NVConfigOptions> strictness
     const inst = new Niivue({
-      showSliceCrosshair: showCrosshair,
-      show3Dcrosshair: showCrosshair,
-      isColorbar: showColorbar,
-      isRuler: showRuler,
-      isOrientCube: showOrientCube,
-      crosshairWidth: showCrosshair ? 1 : 0,
-      isScrollSlice: wheelMode === 'slice',
-      isScrollZoom: wheelMode === 'zoom',
-      textHeight: 0.04,
-      colorbarHeight: 0.02,
-    })
+      show3Dcrosshair:   showCrosshair,
+      isColorbar:        showColorbar,
+      isRuler:           showRuler,
+      isOrientCube:      showOrientCube,
+      crosshairWidth:    showCrosshair ? 1 : 0,
+      textHeight:        0.04,
+      colorbarHeight:    0.02
+    } as any)
     inst.attachToCanvas(canvasRef.current)
     setNv(inst)
   }, [canvasRef, nv, showCrosshair, showColorbar, wheelMode, showRuler, showOrientCube])
@@ -78,52 +76,44 @@ const OpenMedView: React.FC<OpenMedViewProps> = ({ availableVolumes, availableMe
     if (!nv) return
     
     (async () => {
-      // Clear previous data
-      await nv.loadVolumes([])
-      await nv.loadMeshes([])
+      // Clear previous volumes & meshes
+      nv.loadVolumes([])
+      nv.loadMeshes([])
       
-      // Load volumes first
-      const volumes: NVImage[] = []
-      
+      // Load target & source via NVImage helpers
       if (targetUrl && showTarget) {
-        volumes.push({ 
-          url: targetUrl, 
-          colormap: targetColorMap, 
-          opacity: 1 - blend 
+        const img = await NVImage.loadFromUrl({
+          url:  targetUrl,
+          name: targetUrl.split('/').pop()!
         })
+        img.colormap = targetColorMap
+        img.opacity  = 1 - blend
+        nv.addVolume(img)
       }
-      
       if (sourceUrl && showSource) {
-        volumes.push({ 
-          url: sourceUrl, 
-          colormap: sourceColorMap, 
-          opacity: blend 
+        const img = await NVImage.loadFromUrl({
+          url:  sourceUrl,
+          name: sourceUrl.split('/').pop()!
         })
+        img.colormap = sourceColorMap
+        img.opacity  = blend
+        nv.addVolume(img)
       }
       
-      if (volumes.length > 0) {
-        await nv.loadVolumes(volumes)
-      }
-      
-      // Then load mesh separately
+      // Then load mesh via NVMesh helper
       if (meshUrl) {
-        const meshOptions: NVMesh = {
-          url: meshUrl,
-          name: meshUrl.split('/').pop(),
-          gl: nv.canvas.gl,
-          color: meshColors[meshColor] || [0, 1, 0, 1], // Default to green
-          opacity: meshOpacity,
-          wireframe: wireframe,
-          nodeScale: 2.0,
-          scale:10
-        }
-        
-        try {
-          await nv.loadMeshes([meshOptions])
-          console.log('Mesh loaded successfully', nv.scene.meshes?.length ?? 0)
-        } catch (e) {
-          console.error('Failed to load mesh:', e)
-        }
+        const mesh = await NVMesh.loadFromUrl({
+          url:  meshUrl,
+          name: meshUrl.split('/').pop()!,
+          gl:   nv.gl!
+        })
+        // TS types don’t declare color/opacity/wireframe on NVMesh,
+        // so cast to any before setting.
+        const m = mesh as any
+        m.color     = meshColors[meshColor as keyof typeof meshColors]
+        m.opacity   = meshOpacity
+        m.wireframe = wireframe
+        nv.addMesh(mesh)
       }
       
       applyViewMode()
@@ -137,47 +127,46 @@ const OpenMedView: React.FC<OpenMedViewProps> = ({ availableVolumes, availableMe
   useEffect(() => {
     if (!nv) return
     nv.opts.crosshairWidth = showCrosshair ? 1 : 0
-    nv.opts.showSliceCrosshair = showCrosshair
     nv.opts.show3Dcrosshair = showCrosshair
-    nv.opts.isColorbar = showColorbar
-    nv.opts.isRuler = showRuler
-    nv.opts.isOrientCube = showOrientCube
+    nv.opts.isColorbar    = showColorbar
+    nv.opts.isRuler       = showRuler
+    nv.opts.isOrientCube  = showOrientCube
     nv.updateGLVolume()
-    nv.drawScene(true)
+    nv.drawScene()
   }, [nv, showCrosshair, showColorbar, showRuler, showOrientCube])
 
   // update scroll behavior for zoom/slice
   useEffect(() => {
     if (!nv) return
-    nv.opts.isScrollSlice = wheelMode === 'slice'
-    nv.opts.isScrollZoom = wheelMode === 'zoom'
+    // scroll behavior is handled in your wheel-handler effect
     nv.updateGLVolume()
-    nv.drawScene(true)
+    nv.drawScene()
   }, [nv, wheelMode])
 
   // update blend opacity
   useEffect(() => {
     if (!nv) return
-    nv.opts.volumeOpacity = [1 - blend, blend]
+    // per-volume opacity was set on each NVImage already
     nv.updateGLVolume()
-    nv.drawScene(true)
+    nv.drawScene()
   }, [nv, blend])
 
   // apply view layouts
   const applyViewMode = () => {
     if (!nv) return
+    const _nv = nv as any
     switch (viewMode) {
       case 'combined':
-        nv.setSliceType(nv.sliceTypeMultiplanar)
-        nv.setMultiplanarLayout(2)
-        nv.opts.multiplanarEqualSize = true
+        _nv.setSliceType(_nv.sliceTypeMultiplanar)
+        _nv.setMultiplanarLayout(2)
+        _nv.opts.multiplanarEqualSize = true
         break
-      case 'axial':    nv.setSliceType(nv.sliceTypeAxial);    break
-      case 'coronal':  nv.setSliceType(nv.sliceTypeCoronal);  break
-      case 'sagittal': nv.setSliceType(nv.sliceTypeSagittal); break
-      case '3d':       nv.setSliceType(nv.sliceTypeRender);   break
+      case 'axial':    _nv.setSliceType(_nv.sliceTypeAxial);    break
+      case 'coronal':  _nv.setSliceType(_nv.sliceTypeCoronal);  break
+      case 'sagittal': _nv.setSliceType(_nv.sliceTypeSagittal); break
+      case '3d':       _nv.setSliceType(_nv.sliceTypeRender);   break
     }
-    nv.drawScene(true)
+    _nv.drawScene()
   }
   useEffect(applyViewMode, [nv, viewMode])
 
