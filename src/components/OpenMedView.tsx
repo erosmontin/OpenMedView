@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react'
-import { Niivue, NVImage, NVMesh } from '@niivue/niivue'  // Add NVMesh import
+import { Niivue, NVImage, NVMesh } from '@niivue/niivue'
 
-export interface NiivueDualViewerProps {
+export interface OpenMedViewProps {
   /** map from display name → URL */
   availableVolumes: Record<string,string>
   /** map from display name → URL for meshes */
@@ -27,7 +27,7 @@ const meshColors = {
 type WheelMode = 'slice' | 'blend' | 'zoom'
 type ViewMode = 'combined'|'axial'|'coronal'|'sagittal'|'3d'
 
-const NiivueDualViewer: React.FC<NiivueDualViewerProps> = ({ availableVolumes, availableMeshes = {} }) => {
+const OpenMedView: React.FC<OpenMedViewProps> = ({ availableVolumes, availableMeshes = {} }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [nv, setNv] = useState<Niivue|null>(null)
   
@@ -261,49 +261,50 @@ const NiivueDualViewer: React.FC<NiivueDualViewerProps> = ({ availableVolumes, a
           </div>
         </div>
         
-        {/* Mesh controls */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ fontWeight: 'bold', borderBottom: '1px solid #ccc' }}>Mesh</div>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <label>Mesh:</label>
-            <select value={meshUrl} onChange={e => setMeshUrl(e.target.value)}>
-              <option value="">– None –</option>
-              {Object.entries(availableMeshes).map(([name, url]) =>
-                <option key={url} value={url}>{name}</option>
-              )}
-            </select>
+        {availableMeshes && Object.keys(availableMeshes).length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontWeight: 'bold', borderBottom: '1px solid #ccc' }}>Mesh</div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <label>Mesh:</label>
+              <select value={meshUrl} onChange={e => setMeshUrl(e.target.value)}>
+                <option value="">– None –</option>
+                {Object.entries(availableMeshes).map(([name, url]) =>
+                  <option key={url} value={url}>{name}</option>
+                )}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <label>Color:</label>
+              <select value={meshColor} onChange={e => setMeshColor(e.target.value)}>
+                {Object.keys(meshColors).map(color =>
+                  <option key={color} value={color}>{color}</option>
+                )}
+              </select>
+
+              <label>Opacity:</label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.1}
+                value={meshOpacity}
+                onChange={e => setMeshOpacity(+e.target.value)}
+                style={{ width: '80px' }}
+              />
+
+              <label>
+                <input
+                  type="checkbox"
+                  checked={wireframe}
+                  onChange={() => setWireframe(w => !w)}
+                /> Wireframe
+              </label>
+            </div>
           </div>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <label>Color:</label>
-            <select value={meshColor} onChange={e => setMeshColor(e.target.value)}>
-              {Object.keys(meshColors).map(color => 
-                <option key={color} value={color}>{color}</option>
-              )}
-            </select>
-            
-            <label>Opacity:</label>
-            <input 
-              type="range" 
-              min={0} 
-              max={1} 
-              step={0.1} 
-              value={meshOpacity}
-              onChange={e => setMeshOpacity(+e.target.value)} 
-              style={{ width: '80px' }}
-            />
-            
-            <label>
-              <input 
-                type="checkbox" 
-                checked={wireframe}
-                onChange={() => setWireframe(w => !w)} 
-              /> Wireframe
-            </label>
-          </div>
-        </div>
-        
+        )}
+
         {/* View controls */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontWeight: 'bold', borderBottom: '1px solid #ccc' }}>View</div>
@@ -387,4 +388,4 @@ const NiivueDualViewer: React.FC<NiivueDualViewerProps> = ({ availableVolumes, a
   )
 }
 
-export default NiivueDualViewer
+export default OpenMedView

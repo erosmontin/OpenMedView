@@ -1,5 +1,5 @@
 import React from 'react'
-import NiivueDualViewer from './components/NiivueDualViewer'
+import OpenMedView from './components/OpenMedView'
 
 // const exampleVolumes: Record<string,string> = {
 
@@ -32,8 +32,10 @@ const exampleVolumes: Record<string, string> = {
 }
 const App: React.FC = () => (
   <div style={{height:'100vh'}}>
-    <NiivueDualViewer availableVolumes={exampleVolumes}
-    availableMeshes={exampleMeshes} />
+    <OpenMedView availableVolumes={exampleVolumes}
+
+    // availableMeshes={exampleMeshes} 
+    />
   </div>
 )
 
