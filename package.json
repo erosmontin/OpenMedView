@@ -1,12 +1,12 @@
 {
   "name": "openmedview",
-  "version": "0.1.4",
+  "version": "0.1.9",
   "main": "dist/index.cjs.js",
-  "module": "dist/index.esm.js",
+  "module": "dist/index.es.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.esm.js",
+      "import": "./dist/index.es.js",
       "require": "./dist/index.cjs.js"
     }
   },
@@ -20,13 +20,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@niivue/niivue": "^0.61.0",
-    "react": "^17.0.0",
-    "react-dom": "^18.2.0"
+    "@niivue/niivue": "^0.61.0"
   },
   "peerDependencies": {
     "@niivue/niivue": "^0.61.0",
-    "react": "^17.0.0"
+    "react": ">=17.0.0 <20.0.0",
+    "react-dom": ">=17.0.0 <20.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.9",
